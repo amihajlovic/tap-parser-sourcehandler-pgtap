@@ -166,6 +166,8 @@ sub get_rels {
 sub tables_are {
     my $schema = shift;
     my $tables = get_rels(r => $schema);
+    my $partitioned_tables = get_rels(p => $schema);
+	push(@$tables, @$partitioned_tables);
     return unless $tables && @{ $tables };
     print "SELECT tables_are('$schema', ARRAY[\n    '",
         join("',\n    '", @$tables),
@@ -373,11 +375,12 @@ sub columns_are {
         SELECT a.attname AS name
              , pg_catalog.format_type(a.atttypid, a.atttypmod) AS type
              , a.attnotnull AS not_null
-             , a.atthasdef  AS has_default
-             , CASE WHEN pg_catalog.pg_get_expr(d.adbin, d.adrelid) LIKE '''%'
+             , a.atthasdef AS has_default
+             , CASE WHEN pg_catalog.pg_get_expr(d.adbin, d.adrelid) LIKE ANY(ARRAY['''%', 'NULL::%'])
                     THEN pg_catalog.pg_get_expr(d.adbin, d.adrelid)
                     ELSE quote_literal(pg_catalog.pg_get_expr(d.adbin, d.adrelid))
                END
+			 , attgenerated <> '' AS is_generated
           FROM pg_catalog.pg_namespace n
           JOIN pg_catalog.pg_class c ON n.oid = c.relnamespace
           JOIN pg_catalog.pg_attribute a ON c.oid = a.attrelid
@@ -401,20 +404,23 @@ sub columns_are {
         ) });
         my ($null_fn, $null_desc) = $col->[2]
             ? ('col_not_null(', 'be NOT NULL')
-            : ('col_is_null( ', 'allow NULL');
-        my ($def_fn, $def_desc) = $col->[3]
-            ? ('col_has_default(  ', '')
-            : ('col_hasnt_default(', ' not');
+            : ('col_is_null( ', 'allow NULL');        
         print "SELECT has_column(       '$schema', '$table', '$col->[0]', '$desc should exist');\n",
             "SELECT col_type_is(      '$schema', '$table', '$col->[0]', '$col->[1]', '$desc should be type $col->[1]');\n",
-            "SELECT $null_fn     '$schema', '$table', '$col->[0]', '$desc should $null_desc');\n",
-            "SELECT $def_fn'$schema', '$table', '$col->[0]', '$desc should${def_desc} have a default');\n";
-        $total_tests = $total_tests + 4;
-        if ($col->[3]) {
-            print "SELECT col_default_is(   '$schema', '$table', '$col->[0]', $col->[4], '$desc default is');\n";
-            $total_tests++ ;
-        }
-        print "\n";
+            "SELECT $null_fn     '$schema', '$table', '$col->[0]', '$desc should $null_desc');\n";		
+		$total_tests = $total_tests + 3;
+		if (!$col->[5]) {
+			my ($def_fn, $def_desc) = $col->[3]
+				? ('col_has_default(  ', '')
+				: ('col_hasnt_default(', ' not');
+            print "SELECT $def_fn'$schema', '$table', '$col->[0]', '$desc should${def_desc} have a default');\n";		
+			$total_tests++ ;
+			if ($col->[3]) {
+				print "SELECT col_default_is(   '$schema', '$table', '$col->[0]', $col->[4], '$desc default is');\n";
+				$total_tests++ ;
+			}
+		}
+		print "\n";
     }
 
 }
